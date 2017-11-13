@@ -1,7 +1,7 @@
 %% Load the data and select a chunk to analyze.
 
 clear
-load('/Users/mak/research/PARTICLE_FILTER/eden phase tracker/sample_data.mat')       % Load hippocampal data to get a representative slow rhythm.
+load('sample_data.mat')                                                         % Load hippocampal data to get a representative slow rhythm.
 
 inds = 10001:20000;                                                             % choose an interval of time,
 x = EEGfilt(inds);                                                              % ... and get the filtered data.
