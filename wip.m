@@ -3,67 +3,73 @@
 %% Load and filter the sample LFP data
 
 PLOT = true; % debugging plots
+DATA = 'LFP'; % 'LFP' for Alik/Ethan's sample data; 'HC' for Uri's
 
-load('/Volumes/NO NAME/DATA/LFPsamples/sample1.mat'); % LFP data from Alik/Ethan
-k = 10;						 % downsampling factor
-sample1 = sample1(1:k:end);  % subsample
-sample1 = medfilt1(sample1); % median filter to reduce spurious spikes
+switch DATA
+	% Each band should be in a separate row. For the LFP data, for example,
+	% to look at signals from multiple bands, extract each signal
+	% separately and store them in rows of ts_*.
+	
+	case 'LFP' % LFP data from Alik/Ethan
+		load('/Volumes/NO NAME/DATA/LFPsamples/sample1.mat'); 
+		k = 10;						% downsampling factor
+		fs = 3e4 / k;				% sample rate
+		low = [6 30];				% lower frequency bound(s)
+		high = [10 40];				% upper frequency bound(s)
 
-fs = 3e4 / k;					% sample rate
-low = 6;						% lower frequency bound
-high = 10;						% upper frequency bound
+		sample1 = sample1(1:k:end);  % subsample
+		sample1 = medfilt1(sample1); % median filter to reduce spurious spikes
 
-low2 = 30;
-high2 = 40;						% second frequency band
-
-% Filter the signal
-d = designfilt('bandpassiir','FilterOrder',4, ...
-    'HalfPowerFrequency1',low,'HalfPowerFrequency2',high, ...
-    'SampleRate',fs);
-d2 = designfilt('bandpassiir', 'FilterOrder', 4, ...
-	'HalfPowerFrequency1', low2, 'HalfPowerFrequency2', high2, ...
-	'SampleRate', fs);
-
-ts_filt = filtfilt(d, sample1); % Get the filtered time series
-ts_filt2 = filtfilt(d2, sample1); % Get the high frequency filtered series
-
-% Get the analytic signal, phase and amplitude
-ts_analytic = hilbert(ts_filt);
-ts_analytic2 = hilbert(ts_filt2);
-
-%% Load Uri's data
-RUN = false;
-if RUN
-load('/Volumes/NO NAME/GITHUB/Project-Instantaneous-Phase-Estimator/sample_data.mat') % hippocampal data from uri
-ts_filt = EEGfilt;                        % ... and get the filtered data.
-ts_analytic = EEGanalytic;
-fs = 3e3;
-end
+		% Filter the signal
+		ts_filt = zeros(length(low), length(sample1));
+		ts_analytic = zeros(length(low), length(sample1));
+		for i = 1:length(low)
+			d = designfilt('bandpassiir','FilterOrder',4, ...
+				'HalfPowerFrequency1',low(i),'HalfPowerFrequency2',high(i), ...
+				'SampleRate',fs);						% Fourth order Butterworth
+			ts_filt(i, :) = filtfilt(d, sample1);		% Get the filtered time series
+			ts_analytic(i, :) = hilbert(ts_filt(i, :));	% Get the analytic signal
+		end
+		
+	case 'HC' % hippocampal data from Uri
+		load('/Volumes/NO NAME/GITHUB/Project-Instantaneous-Phase-Estimator/sample_data.mat') 
+		ts_filt = EEGfilt(:)';              % ... and get the filtered data.
+		ts_analytic = EEGanalytic(:)';
+		fs = 3e3;
+		k = 1;								% No downsampling
+end		
+t = (0:length(ts_filt)-1)/fs;				% time (for plotting)
+nbands = size(ts_filt, 1);					% Number of frequency bands
 
 %% Clip
 
 % Select a chunk to analyze
-t = (0:length(ts_filt)-1)/fs;
 inds = 10001:20000;                     % choose an interval of time,
-ts_filt = ts_filt(inds);				% clip the filtered signal
-ts_analytic = ts_analytic(inds);		% clip the analytic signal
-
-ts_filt2 = ts_filt2(inds);
-ts_analytic2 = ts_analytic2(inds);
-
-t = t(inds);							% time
+ts_filt = ts_filt(:, inds);				% clip the filtered signal
+ts_analytic = ts_analytic(:, inds);		% ... and the analytic signal
+t = t(inds);							% ... and time
 
 %% Get truth values
-phi = angle(ts_analytic);	% calculate the phases
+phi = unwrap(angle(ts_analytic), [], 2);	% calculate the phases
 M = abs(ts_analytic);		% ... and amplitudes
 
-phi2 = angle(ts_analytic2);
-M2 = abs(ts_analytic2);
-
 if PLOT % Look at filtered and analytic signals
-	figure(1); fullwidth(); ax1 = subplot(211); plot(t, ts_filt, t, M); 
-	ax2 = subplot(212); plot(t, phi); linkaxes([ax1, ax2], 'x')
+	figure(1); fullwidth(); ax1 = subplot(211); plot(t, ts_filt); hold on
+	ax1.ColorOrderIndex = 1; plot(t, M); hold off;
+	axis('tight'); title('Magnitude'); legend(cellstr(num2str((1:nbands)')));
+	ax2 = subplot(212); plot(t, mod(phi, 2*pi)); linkaxes([ax1, ax2], 'x')
+	title('Phase'); legend(cellstr(num2str((1:nbands)')));
+	linkaxes('x')
 end
+
+%% Distribution of differences
+% There is some tuning that needs to be done here. I'm not sure what makes
+% the most sense. Originally, Uri scaled dM by a factor of 10 and left dphi
+% as is. I thought it might also make sense to add some noise to the
+% magnitude and phase traces and then take the differences... I dunno.
+% Either way, the noise parameter for both dphi and dM needs to be
+% optimized. Different sample rates and frequency bands change how well the
+% PF does using a given set of noise parameters.
 
 dphi_FUN = @(phi, w) diff(unwrap(phi) + w * k^2 * (rand(size(phi)) - .5)); % Compute the empirical changes in phase from the data.
 dM_FUN = @(M, w) diff(M + w * k * (rand(size(M)) - .5));	% Compute the empirical changes in amplitude envelope from the data.
@@ -71,56 +77,24 @@ dphi_FUN = @(phi, w) diff(unwrap(phi) + w/2 * k^2 * (randn(size(phi)))); % Compu
 dM_FUN = @(M, w) diff(M + w/2 * k * (randn(size(M))));	% Compute the empirical changes in amplitude envelope from the data.
 % dphi_FUN = @(phi, dphi, w) diff(unwrap(phi) + 1 * dphi(unidrnd(length(phi)-1, length(phi), 1))); % Compute the empirical changes in phase from the data.
 
-dphi = dphi_FUN(phi, 5e-4);
-dM = dM_FUN(M, .4);
-dphi2 = dphi_FUN(phi2, 5e-4);
-dM2 = dM_FUN(M2, .2);
+% Add noise (chi2 and gaussian) to phases and magnitudes and calculated
+% differences
+dphi_FUN = @(phi, w) diff(phi + w(:) * ones(1, length(phi)) .* random('chi2', 1, size(phi)), [], 2);
+dM_FUN = @(M, w) diff(M + w(:) * ones(1, length(phi)) .* randn(size(phi)), [], 2);
+
+dphi = dphi_FUN(phi, 1e-3*sqrt(std(phi, [], 2)));
+dM = dM_FUN(M, .1*sqrt(std(M, [], 2)));
 
 if PLOT
-	figure(11); fullwidth(); subplot(221); histogram(dM); hold on; histogram(diff(M)); hold off; title('M')
-	subplot(222); histogram(dphi); hold on; histogram(diff(unwrap(phi))); hold off; title('phi');
-	subplot(223); histogram(dM2); hold on; histogram(diff(M2)); hold off; title('M2')
-	subplot(224); histogram(dphi2); hold on; histogram(diff(unwrap(phi2))); hold off; title('phi2');
-end
-
-%% Preprocess (IP)
-RUN = false; % Show/hide section	
-if RUN 
-	inds = 102:1101;
-	data = EEGfilt;
-	phi = mod(angle(EEGanalytic(inds)),2*pi); % Compute the phase.;
-
-	fs = 3e2;
-	t = (0:length(data) - 1) / fs;
-
-	LOWER_BOUND = [-Inf, -Inf, 0, 1, -pi/2, -Inf];
-	UPPER_BOUND = [Inf, Inf, Inf, Inf, pi/2, Inf];
-	A0 = [rand(1, 2) - .5, 100, 8, 0, 0];
-	options = optimoptions('lsqcurvefit', 'Display', 'off');
-
-	ahat = zeros(length(A0), length(inds));
-	resnorm = zeros(1, length(inds));
-	theta = zeros(1, length(inds));
-
-	for i = 1:length(inds)
-		curve_inds = ((inds(i) - 44) : (inds(i)));
-		y1 = data(curve_inds - 1); 
-		y2 = data(curve_inds - 2); 
-		ts_filt = t(curve_inds)';
-		y = data(curve_inds);
-		fun = @(a, x) a(1) * y1 + a(2) * y2 + a(3) * cos(2 * pi * x * a(4) + a(5)) + a(6);
-		[ahat(:, i), resnorm(i)] = lsqcurvefit(fun, A0, ts_filt, y, LOWER_BOUND, UPPER_BOUND, options);
-		theta(i) = mod(2 * pi * ts_filt(end) * ahat(4, i) + ahat(5, i), 2*pi);
-
+	figure(11); fullwidth(); 
+	for i = 1:nbands
+		subplot(nbands, 2, 2*i - 1); 
+		histogram(dM(i,:)); hold on; histogram(diff(M(i,:)')); hold off; 
+		title(['M', num2str(i)])
+		subplot(nbands, 2, 2*i); 
+		histogram(dphi(i,:)); hold on; histogram(diff(phi(i,:)')); hold off; 
+		title(['\phi', num2str(i)])
 	end
-
-	figure(1);
-	ahat_5 = ahat(5,:);
-	ahat(5,:) = ahat_5;
-	subplot(131); plot(ahat', 'linewidth', 2); legend({'A1', 'A2', 'M', 'f', 'phi', 'Int'});
-	subplot(132); plot(ts_filt, y, 'ko', ts_filt, fun(ahat(:, end), ts_filt), 'b-')
-	subplot(133); plot(resnorm);
-	set(gcf, 'units', 'normalized', 'position', [0 .5 1 .5]);
 end
 
 %% Run sequential monte carlo (SMC) a.k.a., particle filter.
