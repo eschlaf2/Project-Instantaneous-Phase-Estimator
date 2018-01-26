@@ -1,0 +1,6 @@
+# Working files
+*.m~ 
+
+# Binary files
+._*.m
+
