@@ -14,8 +14,8 @@ switch DATA
 		load('/Volumes/NO NAME/DATA/LFPsamples/sample1.mat'); 
 		k = 10;						% downsampling factor
 		fs = 3e4 / k;				% sample rate
-		low = 6; % [6 30];				% lower frequency bound(s)
-		high = 10; % [10 40];				% upper frequency bound(s)
+		low = [6 30];				% lower frequency bound(s)
+		high = [10 40];				% upper frequency bound(s)
 
 		sample1 = sample1(1:k:end);  % subsample
 		sample1 = medfilt1(sample1); % median filter to reduce spurious spikes
@@ -82,8 +82,8 @@ end
 dphi_FUN = @(phi, w) diff(phi + w(:) * ones(1, length(phi)) .* random('chi2', 1, size(phi)), [], 2);
 dM_FUN = @(M, w) diff(M + w(:) * ones(1, length(phi)) .* randn(size(phi)), [], 2);
 
-dphi = dphi_FUN(phi, 1e-3*sqrt(std(phi, [], 2)));
-dM = dM_FUN(M, .1*sqrt(std(M, [], 2)));
+dphi = dphi_FUN(phi, 2*std(diff(phi,[], 2), [], 2));
+dM = dM_FUN(M, 5*std(diff(M,[], 2), [], 2));
 
 if PLOT
 	figure(11); fullwidth(); 
@@ -98,7 +98,7 @@ if PLOT
 end
 drawnow;
 
-% Run sequential monte carlo (SMC) a.k.a., particle filter (PF).
+%% Run sequential monte carlo (SMC) a.k.a., particle filter (PF).
 
 nsteps = length(inds);                                  % # time steps of data.
 nparts = 1e4;											% # of particles
@@ -107,7 +107,7 @@ samples = [median(dM, 2); median(dphi, 2)] * ones(1, nparts);		% Create initial 
 samples = [M(:, 1); phi(:, 2)] * ones(1, nparts);		% Create initial set of particles, 
 														% they're all the same, at the 
 														% first observed amp & phase.
-sig = sum(ts_filt, 1) + noisestd * randn(size(ts_filt)); % ... add noise to observed signal, to vary difficulty of tracking.
+sig = sum(ts_filt, 1) + noisestd * randn(1, size(ts_filt, 2)); % ... add noise to observed signal, to vary difficulty of tracking.
 
 Mest = M;
 phiest = phi;
@@ -137,7 +137,8 @@ for i = 2:nsteps										% For each time point of data,
 end
 
 figure(2); fullwidth(); plot(t,sig,t,sum(Mest.*cos(phiest), 1)); 
-title('Signal'); legend('True', 'Estimated')
+title('Signal'); legend('True', 'Estimated'); 
+xlabel('Time [s]'); ylabel('Voltage'); xlim([t(1) t(end)]);
 
 figure(3); fullwidth(); 
 title('Components');
@@ -145,8 +146,10 @@ for i = 1:nbands
 	plt = 2 * nbands * 100 + 10 + 2 * i - 1;
 	ax1 = subplot(plt); plot(t, M(i, :), t, Mest(i, :)); 
 	title(sprintf('M%d', i)); legend('True', 'Estimated')
+	xlabel('Time [s]'); ylabel('Voltage'); xlim([t(1) t(end)]);
 	ax2 = subplot(plt + 1); plot(t, mod(phi(i, :), 2*pi), t, mod(phiest(i,:), 2*pi));
 	title(sprintf('phi%d', i)); legend('True', 'Estimated')
+	xlabel('Time [s]'); ylabel('Voltage'); xlim([t(1) t(end)]);
 	linkaxes([ax1, ax2], 'x');
 end
 
