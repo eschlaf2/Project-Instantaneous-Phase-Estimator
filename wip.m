@@ -14,8 +14,8 @@ switch DATA
 		load('/Volumes/NO NAME/DATA/LFPsamples/sample1.mat'); 
 		k = 10;						% downsampling factor
 		fs = 3e4 / k;				% sample rate
-		low = [6 30];				% lower frequency bound(s)
-		high = [10 40];				% upper frequency bound(s)
+		low = 6; % [6 30];				% lower frequency bound(s)
+		high = 10; % [10 40];				% upper frequency bound(s)
 
 		sample1 = sample1(1:k:end);  % subsample
 		sample1 = medfilt1(sample1); % median filter to reduce spurious spikes
@@ -59,7 +59,7 @@ if PLOT % Look at filtered and analytic signals
 	axis('tight'); title('Magnitude'); legend(cellstr(num2str((1:nbands)')));
 	ax2 = subplot(212); plot(t, mod(phi, 2*pi)); linkaxes([ax1, ax2], 'x')
 	title('Phase'); legend(cellstr(num2str((1:nbands)')));
-	linkaxes('x')
+	linkaxes([ax1 ax2], 'x')
 end
 
 %% Distribution of differences
@@ -71,13 +71,13 @@ end
 % optimized. Different sample rates and frequency bands change how well the
 % PF does using a given set of noise parameters.
 
-dphi_FUN = @(phi, w) diff(unwrap(phi) + w * k^2 * (rand(size(phi)) - .5)); % Compute the empirical changes in phase from the data.
-dM_FUN = @(M, w) diff(M + w * k * (rand(size(M)) - .5));	% Compute the empirical changes in amplitude envelope from the data.
-dphi_FUN = @(phi, w) diff(unwrap(phi) + w/2 * k^2 * (randn(size(phi)))); % Compute the empirical changes in phase from the data.
-dM_FUN = @(M, w) diff(M + w/2 * k * (randn(size(M))));	% Compute the empirical changes in amplitude envelope from the data.
+% dphi_FUN = @(phi, w) diff(unwrap(phi) + w * k^2 * (rand(size(phi)) - .5)); % Compute the empirical changes in phase from the data.
+% dM_FUN = @(M, w) diff(M + w * k * (rand(size(M)) - .5));	% Compute the empirical changes in amplitude envelope from the data.
+% dphi_FUN = @(phi, w) diff(unwrap(phi) + w/2 * k^2 * (randn(size(phi)))); % Compute the empirical changes in phase from the data.
+% dM_FUN = @(M, w) diff(M + w/2 * k * (randn(size(M))));	% Compute the empirical changes in amplitude envelope from the data.
 % dphi_FUN = @(phi, dphi, w) diff(unwrap(phi) + 1 * dphi(unidrnd(length(phi)-1, length(phi), 1))); % Compute the empirical changes in phase from the data.
 
-% Add noise (chi2 and gaussian) to phases and magnitudes and calculated
+% Add noise (chi2 and gaussian) to phases and magnitudes and calculate
 % differences
 dphi_FUN = @(phi, w) diff(phi + w(:) * ones(1, length(phi)) .* random('chi2', 1, size(phi)), [], 2);
 dM_FUN = @(M, w) diff(M + w(:) * ones(1, length(phi)) .* randn(size(phi)), [], 2);
@@ -96,102 +96,105 @@ if PLOT
 		title(['\phi', num2str(i)])
 	end
 end
+drawnow;
 
-%% Run sequential monte carlo (SMC) a.k.a., particle filter.
+% Run sequential monte carlo (SMC) a.k.a., particle filter (PF).
 
 nsteps = length(inds);                                  % # time steps of data.
 nparts = 1e4;											% # of particles
 noisestd = 1;
-samples = [M(1); phi(1); M2(1); phi2(1)]*ones(1,nparts);% Create initial set of particles, they're all the same, at the first observed amp & phase.
-sig = ts_filt+ts_filt2+normrnd(0,noisestd,size(ts_filt));        % ... add noise to observed signal, to vary difficulty of tracking.
+samples = [median(dM, 2); median(dphi, 2)] * ones(1, nparts);		% Create initial set of particles, 
+samples = [M(:, 1); phi(:, 2)] * ones(1, nparts);		% Create initial set of particles, 
+														% they're all the same, at the 
+														% first observed amp & phase.
+sig = sum(ts_filt, 1) + noisestd * randn(size(ts_filt)); % ... add noise to observed signal, to vary difficulty of tracking.
 
 Mest = M;
 phiest = phi;
-M2est = M2;
-phi2est = phi2;
 
-if ~exist('pf', 'var'), pf = figure(); end
+
 for i = 2:nsteps										% For each time point of data,
     
-	samples = SMC_update(...							% Update particles
-		samples, sig(i), dM, dphi, noisestd, dM2, dphi2);	% Note: was 10*dM, 1.4*dphi
-	Mest(i) = mean(samples(1,:));                       %   Estimate amplitude from all particles.
-    phiest(i) = angle(sum(exp(1i*samples(2,:))));       %   Estimate phase from all particles.
-	M2est(i) = mean(samples(3, :));
-	phi2est(i) = angle(sum(exp(1i*samples(4,:))));
+	samples = PF_update(...								% Update particles
+		samples, sig(i), [dM; dphi], noisestd);			% Note: was 10*dM, 1.4*dphi
+	Mest(:, i) = mean(samples(1:nbands,:), 2);          % Estimate amplitude from all particles.
+    phiest(:, i) = angle(sum(exp(1i*samples((nbands+1):end,:)), 2)); % Estimate phase from all particles.
 	
-    if 0                                                %   Plot everything.
-    plot(samples(1,:),samples(2,:),'.',M(i),phi(i),'r*'); axis([0 max(M) 0 2*pi]); title(num2str(i));
-    xlabel('Amplitude'); ylabel('Phase')
-    hold on;
-    figure(pf); plot(Mest(i), phiest(i), '*g')
-    hold off
-    drawnow; pause(1e-2);
+    if 0                                     %   Plot everything.
+		if ~exist('pf', 'var'), pf = figure(99); fullwidth(); end
+		figure(pf);
+		for ii = 1:nbands
+			subplot(1, nbands, ii);
+			plot(samples(ii,:),samples(ii + nbands,:),'.',M(ii, i),phi(ii, i),'r*'); 
+			axis([0 max(M(i, :)) 0 2*pi]); title(num2str(i));
+			xlabel('Amplitude'); ylabel('Phase')
+			hold on;
+			plot(Mest(ii, i), phiest(ii, i), '*g')
+			hold off
+		end
+		drawnow; pause(1e-2);
 	end
 end
 
-figure(2); fullwidth(); plot(t,sig,t,Mest.*cos(phiest) + M2est.*cos(phi2est));
-figure(3); fullwidth(); ax1 = subplot(211); plot(t, M, t, Mest); ax2 = subplot(212); plot(t, mod(phi, 2*pi), t, mod(phiest, 2*pi));
-figure(4); fullwidth(); ax1 = subplot(211); plot(t, M2, t, M2est); ax2 = subplot(212); plot(t, mod(phi2, 2*pi), t, mod(phi2est, 2*pi));
+figure(2); fullwidth(); plot(t,sig,t,sum(Mest.*cos(phiest), 1)); 
+title('Signal'); legend('True', 'Estimated')
 
-%% Variable assignment
-
-RUN = false; 
-if RUN
-data = s1_300_filt;
-data_analytic = s1_300_analytic;
-
-inds = 10001:20000;                       % choose an interval of time,
-ts_filt = data(inds);                        % ... and get the filtered data.
-M = abs(data_analytic(inds));               % Compute the amplitude envelope.
-phi = mod(angle(data_analytic(inds)),2*pi); % Compute the phase.;
-
-dphi = diff(unwrap(phi));                 % Compute the empirical changes in phase from the data.
-dM = diff(M);   
+figure(3); fullwidth(); 
+title('Components');
+for i = 1:nbands
+	plt = 2 * nbands * 100 + 10 + 2 * i - 1;
+	ax1 = subplot(plt); plot(t, M(i, :), t, Mest(i, :)); 
+	title(sprintf('M%d', i)); legend('True', 'Estimated')
+	ax2 = subplot(plt + 1); plot(t, mod(phi(i, :), 2*pi), t, mod(phiest(i,:), 2*pi));
+	title(sprintf('phi%d', i)); legend('True', 'Estimated')
+	linkaxes([ax1, ax2], 'x');
 end
 
 %% Animation
-
+% Don't remember what I was looking at but it was fun to look at so I'm not
+% ready to throw it away yet. Probably doesn't workk right now, but i might
+% still try to look at it again.
 RUN = false; 
 if RUN
-clear 1; figure(1);
+clear 999; figure(999);
 ax1 = subplot(121);
 ax2 = subplot(122);
 L = 200;
 c = winter(L + 1);
 for i = 1:2:length(dM)
 m = max(1, i - L);
-plot(ax1, M(1:end-1), dM, 'color', .75 * [1 1 1]); hold(ax1, 'on'); scatter(ax1, M(m:i), dM(m:i), 10, c(1:i - m + 1,:), 'filled'); set(ax1, 'xlim', [quantile(M, .01), quantile(M, .99)], 'ylim', [quantile(dM, .01), quantile(dM, .99)]); hold(ax1, 'off')
-plot(ax2, (-499:500), data(inds(1:1000) - 500 + i), (-499:500), abs(data_analytic(inds(1:1000) - 500 + i))); xticks(0); ylim([min(ts_filt), max(ts_filt)]); grid on;
+inds = max(i - 500, 1):(min(i + 500 - 1, length(dM)));
+plot(ax1, M(1,1:end-1), dM, 'color', .75 * [1 1 1]); hold(ax1, 'on'); scatter(ax1, M(1,m:i), dM(1, m:i), 10, c(1:i - m + 1,:), 'filled'); set(ax1, 'xlim', [quantile(M(1,:), .01), quantile(M(1,:), .99)], 'ylim', [quantile(dM(1,:), .01), quantile(dM(1,:), .99)]); hold(ax1, 'off')
+plot(ax2, ts_filt(1,inds)); hold on;
+plot(ax2, abs(ts_analytic(1,inds))); 
+xlim([-499 500]);xticks(0); ylim([min(ts_filt), max(ts_filt)]); grid on;
 drawnow limitrate nocallbacks; 
 end
 end
 
 %% Supplementary functions
 
-function samples = SMC_update(samples, observation, dM, dphi, noisestd, dM2, dphi2)
+function samples = PF_update(samples, observation, transfer, noisestd)
 	
-	nsteps = length(dM);
+	nsteps = length(transfer);
 	nparts = length(samples);
-	eps = @() unidrnd(nsteps-1, 1, nparts);                 %   Get a random set of indices.
+	nbands = size(transfer, 1) / 2;
+								
+	%   Get a random set of transfers
+	deltas = cell2mat(arrayfun(@(row) transfer(row, unidrnd(nsteps-1, 1, nparts)), 1:size(samples,1), 'uniformoutput', false)');	
     
-                                                        %   State transition function
-    samples(1,:)=abs(samples(1,:)+dM(eps())');         %   ... perturb each amplitude by a random amount derived from the data.
-    samples(2,:)=samples(2,:)+dphi(eps())';     %   ... perturb each phase by a random amount derived from the data.
-	
-	if exist('dM2', 'var')
-		samples(3,:) = abs(samples(3,:) + dM2(eps())');
-		samples(4,:) = samples(4,:) + dphi2(eps())';
-	end
+                                                    %   State transition function
+	samples = samples + deltas;			%   ... perturb each particle
+	samples(1:nbands,:) = abs(samples(1:nbands,:));	
 
-                                                        %   Determine the likelihood of each particle.
-                                                        %   ... the estimated signal is amp*cos(phase). compute this for each particle and compare to signal.
-                                                        %   ... assign likelihood using a Gaussian, with mean 0 for difference of particle and data, and fixed std.
-                                                        %   ... add a fixed small probability to prevent particles from disappearing.
-	est = samples(1,:).*cos(samples(2,:));
-	if size(samples,1) == 4
-		est = est + samples(3,:).*cos(samples(4,:));
-	end
+													%   Determine the likelihood of each particle.
+													%   ... the estimated signal is amp*cos(phase). compute this for each particle and compare to signal.
+													%   ... assign likelihood using a Gaussian, with mean 0 for difference of particle and data, and fixed std.
+													%   ... add a fixed small probability to prevent particles from disappearing.
+	est = sum(samples(1:nbands,:).*cos(samples(nbands + 1:end,:)), 1);
+	
+	
+	
     p = normpdf(observation-est, 0 ,noisestd)+1e-6;
     p = p/sum(p);                                       %   Normalize the probability to sum to 1.
 
